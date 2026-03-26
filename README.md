@@ -109,116 +109,129 @@ cat /proc/mdstat
 sudo mdadm --detail /dev/md0
 ```
 
-## Accès distant (Deux solutions)
-### TailScale (Facile)
-Pour utiliser tailscale, l'installer sur android / iphone, se connecter avec google. 
-Installer ```curl```s'il n'est pas installé. Il doit être dispo avec un gestionnaire de package type brew si besoin.
+## Accès distant
+
+### Wireguard
+
+#### Installation
 ```bash
-sudo apt update && sudo apt install curl -y
+sudo apt install wireguard qrencode -y
 ```
 
-Installer tailscale sur le NAS 
+#### Génération des clés serveur
 ```bash
-curl -fsSL https://tailscale.com/install.sh | sh
+wg genkey | sudo tee /etc/wireguard/server_private.key | wg pubkey | sudo tee /etc/wireguard/server_public.key
 ```
 
-Activer et démarrer le service
+#### Génération des clés client
 ```bash
-sudo systemctl enable --now tailscaled
+# Client 1
+wg genkey | sudo tee /etc/wireguard/client_private.key | wg pubkey | sudo tee /etc/wireguard/client_public.key
+
+# Client 2
+wg genkey | sudo tee /etc/wireguard/client2_private.key | wg pubkey | sudo tee /etc/wireguard/client2_public.key
 ```
 
-Créer le lien de connexion
-```bash
-sudo tailscale up
-```
-
-Suivre le lien et c'est bon
-
-
-### Wireguard + CloudFlare (Compliqué)
-Créer un compte cloudflare et lié le nom de domain. 
-
-Configuration wireguard.
- Installation
- ```bash
- sudo apt update && sudo apt install wireguard
-```
-
-Actvier le forwarding sur le NAS
-```bash
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p“
-```
-Et sur la box aller sur NAT PAT, nouvelle règle WIREGUARD, Port interne : 51820, Port externe : 51820, Protocole : Équipement :${NAS}
-
-Générer les clées serveurs 
-```bash
-wg genkey | tee /etc/wireguard/server_private.key | wg pubkey > /etc/wireguard/server_public.key
-chmod 600 /etc/wireguard/server_private.key
-```
-
-Configurer ici ```sudo nano /etc/wireguard/wg0.conf```
-```bash
+#### Configuration serveur — /etc/wireguard/wg0.conf (Penser à passer les valeurs dans le champs vides)
+```ini
 [Interface]
+PrivateKey = 
 Address = 10.0.0.1/24
 ListenPort = 51820
-PrivateKey = TON_CLE_PRIVEE
-PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 
 [Peer]
-PublicKey = CLE_PUBLIQUE_DU_CLIENT
+PublicKey = 
 AllowedIPs = 10.0.0.2/32
-```
-
-Générer les clés clientes 
-```bash
-wg genkey | tee /etc/wireguard/client_private.key | wg pubkey > /etc/wireguard/client_public.key
-chmod 600 /etc/wireguard/client_private.key
-```
-
-Créer la conf cliente 
-```bash
-[Interface]
-PrivateKey = CLE_PRIVEE_CLIENT
-Address = 10.0.0.2/24
 
 [Peer]
-PublicKey = CLE_PUBLIQUE_SERVEUR
-Endpoint = TON_IP_PUBLIC:51820
-AllowedIPs = 0.0.0.0/0
+PublicKey = 
+AllowedIPs = 10.0.0.3/32
+```
+
+#### Configuration client — /etc/wireguard/client.conf (Penser à passer les valeurs dans le champs vides)
+```ini
+[Interface]
+PrivateKey = 
+Address = 10.0.0.2/24
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = 
+Endpoint = :51820
+AllowedIPs = 10.0.0.1/32
 PersistentKeepalive = 25
 ```
 
-Créer un QG code pour simplifier l'usage 
+> Pour client2.conf : remplacer Address par `10.0.0.3/24` et utiliser client2_private.key
+
+#### Activation du forwarding IP
 ```bash
-qrencode -t ansiutf8 < /etc/wireguard/client.conf
+sudo sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+sudo sysctl -p
 ```
 
-Start le bordel et peut être que ça marche, peut être pas :)
+#### Démarrage et activation au boot
 ```bash
-sudo systemctl enable wg-quick@wg0
-sudo systemctl start wg-quick@wg0
+sudo systemctl enable --now wg-quick@wg0
 ```
+
+#### Génération QR code pour smartphone
+```bash
+sudo qrencode -t ansiutf8 < /etc/wireguard/client.conf
+sudo qrencode -t ansiutf8 < /etc/wireguard/client2.conf
+```
+
+#### Ajout d'un nouveau client
+
+1. Générer les clés client
+2. Ajouter un bloc `[Peer]` dans `wg0.conf` avec la clé publique et une IP libre (10.0.0.x/32)
+3. Créer le fichier `clientX.conf`
+4. Redémarrer le service : `sudo systemctl restart wg-quick@wg0`
+5. Générer le QR code et scanner depuis l'app WireGuard
+
+#### Box internet — Redirection de port
+
+- Protocole : UDP
+- Port : 51820
+- Machine destination : 192.168.1.11 (NAS)
+
+#### Nextcloud — Domaines de confiance
+
+Ajouter `10.0.0.1` dans `/var/www/html/nextcloud/config/config.php` :
+```php
+'trusted_domains' =>
+array (
+  0 => 'localhost',
+  1 => '192.168.1.11',
+  2 => '10.0.0.1',
+),
+```
+
+#### Notes
+
+- Split tunneling actif : seul le trafic vers `10.0.0.1` passe par le tunnel
+- Chaque client a sa propre IP : 10.0.0.2, 10.0.0.3, etc.
 
 ## Apache2
-### Installation d'apache2
+#### Installation d'apache2
 ```bash
 apt install apache2 -y
 ```
 
-### Installation des prérequis
+#### Installation des prérequis
 ```bash
 apt install php php-common libapache2-mod-php php-bz2 php-gd php-mysql \
 php-curl php-mbstring php-imagick php-zip php-common php-curl php-xml \
 php-json php-bcmath php-xml php-intl php-gmp zip unzip wget -y
 ```
-### Activation des modules requis
+#### Activation des modules requis
 ```bash
 a2enmod env rewrite dir mime headers setenvif ssl
 ```
 
-### Lancer Apach2
+#### Lancer Apach2
 ```bash
 systemctl restart apache2
 systemctl enable apache2
@@ -234,7 +247,7 @@ Vérifier les modules chargés
 apache2ctl -M
 ```
 
-## Installer et configurer MariaDB
+#### Installer et configurer MariaDB
 ```bash
 apt install mariadb-server -y
 ```
@@ -633,7 +646,7 @@ Ajouter la conf dans nextcloud ici ```/var/www/html/nextcloud/config/config.php`
 'memcache.local' => '\OC\Memcache\APCu',
 ```
 
-### Activer Redis Cache (Optionel)
+### Activer Redis Cache (Conseillé)
 Installer
 ```bash
 apt install redis-server php-redis -y
