@@ -1,5 +1,5 @@
 # Installation Nextcloud sur un linux
-# Apache, MariaDB et ~~WireGuard~~ TailScale
+# Apache, MariaDB et WireGuard
 
 ### Mise a niveau du système 
 ```bash
@@ -108,111 +108,6 @@ Vérifier l'état du RAID
 cat /proc/mdstat
 sudo mdadm --detail /dev/md0
 ```
-
-## Accès distant
-
-### Wireguard
-
-#### Installation
-```bash
-sudo apt install wireguard qrencode -y
-```
-
-#### Génération des clés serveur
-```bash
-wg genkey | sudo tee /etc/wireguard/server_private.key | wg pubkey | sudo tee /etc/wireguard/server_public.key
-```
-
-#### Génération des clés client
-```bash
-# Client 1
-wg genkey | sudo tee /etc/wireguard/client_private.key | wg pubkey | sudo tee /etc/wireguard/client_public.key
-
-# Client 2
-wg genkey | sudo tee /etc/wireguard/client2_private.key | wg pubkey | sudo tee /etc/wireguard/client2_public.key
-```
-
-#### Configuration serveur — /etc/wireguard/wg0.conf (Penser à passer les valeurs dans le champs vides)
-```ini
-[Interface]
-PrivateKey = 
-Address = 10.0.0.1/24
-ListenPort = 51820
-PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
-
-[Peer]
-PublicKey = 
-AllowedIPs = 10.0.0.2/32
-
-[Peer]
-PublicKey = 
-AllowedIPs = 10.0.0.3/32
-```
-
-#### Configuration client — /etc/wireguard/client.conf (Penser à passer les valeurs dans le champs vides)
-```ini
-[Interface]
-PrivateKey = 
-Address = 10.0.0.2/24
-DNS = 1.1.1.1
-
-[Peer]
-PublicKey = 
-Endpoint = :51820
-AllowedIPs = 10.0.0.1/32
-PersistentKeepalive = 25
-```
-
-> Pour client2.conf : remplacer Address par `10.0.0.3/24` et utiliser client2_private.key
-
-#### Activation du forwarding IP
-```bash
-sudo sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
-sudo sysctl -p
-```
-
-#### Démarrage et activation au boot
-```bash
-sudo systemctl enable --now wg-quick@wg0
-```
-
-#### Génération QR code pour smartphone
-```bash
-sudo qrencode -t ansiutf8 < /etc/wireguard/client.conf
-sudo qrencode -t ansiutf8 < /etc/wireguard/client2.conf
-```
-
-#### Ajout d'un nouveau client
-
-1. Générer les clés client
-2. Ajouter un bloc `[Peer]` dans `wg0.conf` avec la clé publique et une IP libre (10.0.0.x/32)
-3. Créer le fichier `clientX.conf`
-4. Redémarrer le service : `sudo systemctl restart wg-quick@wg0`
-5. Générer le QR code et scanner depuis l'app WireGuard
-
-#### Box internet — Redirection de port
-
-- Protocole : UDP
-- Port : 51820
-- Machine destination : 192.168.1.11 (NAS)
-
-#### Nextcloud — Domaines de confiance
-
-Ajouter `10.0.0.1` dans `/var/www/html/nextcloud/config/config.php` :
-```php
-'trusted_domains' =>
-array (
-  0 => 'localhost',
-  1 => '192.168.1.11',
-  2 => '10.0.0.1',
-),
-```
-
-#### Notes
-
-- Split tunneling actif : seul le trafic vers `10.0.0.1` passe par le tunnel
-- Chaque client a sa propre IP : 10.0.0.2, 10.0.0.3, etc.
 
 ## Apache2
 #### Installation d'apache2
@@ -405,6 +300,111 @@ On peux vérifier que ça a bien mis à jour avec
 php-fpm8.3 -i | grep -E "memory_limit|upload_max_filesize|post_max_size|max_execution_time|max_input_vars|max_input_time|date.timezone"
 ```
 
+## Accès distant
+
+### Wireguard
+
+#### Installation
+```bash
+sudo apt install wireguard qrencode -y
+```
+
+#### Génération des clés serveur
+```bash
+wg genkey | sudo tee /etc/wireguard/server_private.key | wg pubkey | sudo tee /etc/wireguard/server_public.key
+```
+
+#### Génération des clés client
+```bash
+# Client 1
+wg genkey | sudo tee /etc/wireguard/client_private.key | wg pubkey | sudo tee /etc/wireguard/client_public.key
+
+# Client 2
+wg genkey | sudo tee /etc/wireguard/client2_private.key | wg pubkey | sudo tee /etc/wireguard/client2_public.key
+```
+
+#### Configuration serveur — /etc/wireguard/wg0.conf (Penser à passer les valeurs dans le champs vides)
+```ini
+[Interface]
+PrivateKey = 
+Address = 10.0.0.1/24
+ListenPort = 51820
+PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+[Peer]
+PublicKey = 
+AllowedIPs = 10.0.0.2/32
+
+[Peer]
+PublicKey = 
+AllowedIPs = 10.0.0.3/32
+```
+
+#### Configuration client — /etc/wireguard/client.conf (Penser à passer les valeurs dans le champs vides)
+```ini
+[Interface]
+PrivateKey = 
+Address = 10.0.0.2/24
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = 
+Endpoint = :51820
+AllowedIPs = 10.0.0.1/32
+PersistentKeepalive = 25
+```
+
+> Pour client2.conf : remplacer Address par `10.0.0.3/24` et utiliser client2_private.key
+
+#### Activation du forwarding IP
+```bash
+sudo sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+sudo sysctl -p
+```
+
+#### Démarrage et activation au boot
+```bash
+sudo systemctl enable --now wg-quick@wg0
+```
+
+#### Génération QR code pour smartphone
+```bash
+sudo qrencode -t ansiutf8 < /etc/wireguard/client.conf
+sudo qrencode -t ansiutf8 < /etc/wireguard/client2.conf
+```
+
+#### Ajout d'un nouveau client
+
+1. Générer les clés client
+2. Ajouter un bloc `[Peer]` dans `wg0.conf` avec la clé publique et une IP libre (10.0.0.x/32)
+3. Créer le fichier `clientX.conf`
+4. Redémarrer le service : `sudo systemctl restart wg-quick@wg0`
+5. Générer le QR code et scanner depuis l'app WireGuard
+
+#### Box internet — Redirection de port
+
+- Protocole : UDP
+- Port : 51820
+- Machine destination : 192.168.1.11 (NAS)
+
+#### Nextcloud — Domaines de confiance
+
+Ajouter `10.0.0.1` dans `/var/www/html/nextcloud/config/config.php` :
+```php
+'trusted_domains' =>
+array (
+  0 => 'localhost',
+  1 => '192.168.1.11',
+  2 => '10.0.0.1',
+),
+```
+
+#### Notes
+
+- Split tunneling actif : seul le trafic vers `10.0.0.1` passe par le tunnel
+- Chaque client a sa propre IP : 10.0.0.2, 10.0.0.3, etc.
+
 ## Outils
 ### Ubuntu
 Désactiver l'interface graphique au démarrage. A terme, il est inutile que le NAS génère une interface graphique.
@@ -438,7 +438,7 @@ systemctl restart apache2
 ## Backup
 ### Carte SD
 
-Avant de commencer à utiliser le NAS, s'il est stocker sur une carte SD comme dans mon cas (raspbery pi oblige) je recommande d'avoir une save de toute cette conf pour ne pas se la retaper. Pour ce faire il faut une autre SD de la même taille ou plus. Et la dupliquer soit via un utilitaire Windows ou mac, soit via ligne de commande avec un ordi : 
+Avant de commencer à utiliser le NAS, s'il est stocké sur une carte SD comme dans mon cas (raspbery pi oblige) je recommande d'avoir une save de toute cette conf pour ne pas se la retaper. Pour ce faire il faut une autre SD de la même taille ou plus. Et la dupliquer soit via un utilitaire Windows ou mac, soit via ligne de commande avec un ordi : 
 
 Lister les nom pour voir qui est qui : (⚠ **Ne pas utiliser une partition** comme `/dev/sdb1`, mais bien le disque entier `/dev/sdb`)
 ```bash
@@ -458,7 +458,10 @@ sudo dd if=~/carte_sd.img of=/dev/sdY bs=4M status=progress
 sync
 ```
 
-### Données
+#### Note 
+Il existe des adapter pour SSD NVME. J'en ai acheté un mais l'installation n'a pas encore été faite vu le prix des SSD en ce moment...
+
+### Données (Théorique)
 Petit script de backup permettant de créer une archive avec le contenu du RAID. Si on souhaite faire un extract de toute les data du nas pour les stocker dans un endroit sécuriser. (A tester sur un disque réel)
 
 ```bash
@@ -559,6 +562,59 @@ Redémarrer
 ```bash 
 systemctl restart apache2
 ```
+## Redis — Configuration Nextcloud
+
+#### Installation
+```bash
+sudo apt install redis-server php-redis -y
+```
+
+#### Configuration Redis — /etc/redis/redis.conf
+
+Paramètres clés actifs :
+```
+bind 127.0.0.1 -::1
+port 6379
+```
+
+> Redis écoute uniquement en local (127.0.0.1), pas accessible depuis l'extérieur.
+
+#### Configuration Nextcloud — /var/www/html/nextcloud/config/config.php
+```php
+'memcache.locking' => '\OC\Memcache\Redis',
+'redis' => [
+    'host' => '127.0.0.1',
+    'port' => 6379,
+],
+```
+
+####v Activation au boot
+```bash
+sudo systemctl enable --now redis-server
+```
+
+#### Commandes utiles
+```bash
+# Statut du service
+sudo systemctl status redis-server
+
+# Tester la connexion
+redis-cli ping
+# Réponse attendue : PONG
+
+# Surveiller les requêtes en temps réel
+redis-cli monitor
+
+# Statistiques
+redis-cli info stats
+```
+
+## Notes
+
+- Redis est utilisé comme cache de verrouillage (`memcache.locking`) pour Nextcloud
+- Communication via TCP local (127.0.0.1:6379)
+- Pas d'authentification (accès local uniquement)
+- La configuration via socket Unix a été testée mais non retenue car... ça ne pas marche pas ^^
 
 ### Configuration PHP-FPM (Optionel)
 
