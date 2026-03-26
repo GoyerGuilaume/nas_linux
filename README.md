@@ -685,3 +685,116 @@ systemctl restart redis-server
 systemctl restart php8.3-fpm
 systemctl restart apache2
 ```
+## Gérer la température du boitier
+### Matériel
+
+- Module relais 2 canaux 5V (NPN, LOW trigger)
+- Ventilateur 5V 2 fils
+- Jumper wires femelle-femelle
+
+### Branchement
+
+### GPIO → Module relais
+| Module relais | Pin GPIO |
+|---|---|
+| VCC | Pin 2 (5V) |
+| GND | Pin 6 (GND) |
+| IN1 | Pin 11 (GPIO 17) |
+
+> Le jumper JD-VCC/VCC reste en place
+
+### Ventilateur → Relais K1
+| | |
+|---|---|
+| Pin 4 (5V) | COM de K1 |
+| NO de K1 | Fil rouge ventilateur (+) |
+| Pin 9 (GND) | Fil noir ventilateur (-) |
+
+### Installation des dépendances
+```bash
+sudo apt install python3-gpiozero python3-lgpio -y
+```
+
+#### Script — /usr/local/bin/fan_control.py
+```python
+#!/usr/bin/env python3
+from gpiozero import OutputDevice
+from time import sleep
+import logging
+
+logging.basicConfig(
+    filename='/var/log/fan_control.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(message)s'
+)
+
+TEMP_ON = 52    # Température déclenchement ventilateur (°C)
+TEMP_OFF = 42   # Température extinction ventilateur (°C)
+
+fan = OutputDevice(17, active_high=False)
+
+def get_temp():
+    return int(open("/sys/class/thermal/thermal_zone0/temp").read()) / 1000
+
+while True:
+    temp = get_temp()
+
+    if temp > TEMP_ON and not fan.value:
+        fan.on()
+        logging.info(f"Ventilateur ON - Temp: {temp}°C")
+    elif temp < TEMP_OFF and fan.value:
+        fan.off()
+        logging.info(f"Ventilateur OFF - Temp: {temp}°C")
+
+    sleep(5)
+```
+
+#### Service systemd — /etc/systemd/system/fan-control.service
+```ini
+[Unit]
+Description=Fan control based on CPU temperature
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/fan_control.py
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Activation au boot
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now fan-control.service
+```
+
+## Commandes utiles
+```bash
+# Statut du service
+sudo systemctl status fan-control.service
+
+# Logs
+tail -f /var/log/fan_control.log
+
+# Température en temps réel
+watch -n 1 "date '+%H:%M:%S' && cat /sys/class/thermal/thermal_zone0/temp | awk '{printf \"%.1f°C\n\", \$1/1000}'"
+
+# Test de charge CPU
+stress --cpu 4 --timeout 60
+```
+
+## Températures observées
+
+| Scénario | Température |
+|---|---|
+| Repos | ~40°C |
+| Usage réel intensif | ~45°C |
+| Stress CPU total | ~61°C |
+
+## Notes
+
+- Hystérésis de 10°C entre ON et OFF pour éviter les cycles trop fréquents
+- Le script doit être lancé en root (accès GPIO)
+- Le ventilateur du dissipateur (5V, 4 fils) tourne en permanence via USB
